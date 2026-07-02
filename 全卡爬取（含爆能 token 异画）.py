@@ -1,6 +1,7 @@
 import os
 import time
 import re
+import csv
 import requests
 from io import BytesIO
 from PIL import Image
@@ -27,6 +28,74 @@ HEADERS = {
 }
 
 SAVE_DIR = "SV_WB_Cards"
+CSV_FILE = os.path.join(SAVE_DIR, "SV_WB_Cards.csv")
+
+
+def build_card_dictionary():
+    """爬取并保存全卡牌字典到 CSV"""
+    print("================ 开始更新本地卡牌数据库 ================")
+    card_db = {}
+
+    for cls_id in range(8):
+        offset = 0
+        page_num = 1
+        print(f"正在爬取职业 {cls_id} 的卡牌数据...")
+
+        while True:
+            params = {
+                "offset": offset,
+                "class": cls_id,
+                "cost": "0,1,2,3,4,5,6,7,8,9,10",
+            }
+
+            try:
+                response = requests.get(
+                    API_URL, headers=HEADERS, params=params, timeout=10
+                )
+                response.raise_for_status()
+                json_data = response.json()
+            except Exception as e:
+                print(f"  [!] 请求失败: {e}")
+                break
+
+            data_block = json_data.get("data", {})
+            card_details = data_block.get("card_details", {})
+            sort_card_id_list = data_block.get("sort_card_id_list", [])
+
+            if not sort_card_id_list:
+                break
+
+            for card_id in sort_card_id_list:
+                card_info = card_details.get(str(card_id))
+                if not card_info:
+                    continue
+
+                common_info = card_info.get("common", {})
+                name = common_info.get("name", f"未知卡牌_{card_id}")
+                cost = common_info.get("cost", 0)
+
+                card_db[str(card_id)] = {"name": name, "cost": cost}
+
+                style_list = card_info.get("style_card_list", [])
+                if isinstance(style_list, list):
+                    for idx, style in enumerate(style_list, start=1):
+                        style_name = style.get("name", "").strip()
+                        if not style_name:
+                            style_name = name
+                        card_db[f"{card_id}@{idx}"] = {"name": style_name, "cost": cost}
+
+            offset += len(sort_card_id_list)
+            page_num += 1
+            time.sleep(0.5)
+
+    os.makedirs(SAVE_DIR, exist_ok=True)
+    with open(CSV_FILE, mode="w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["card_id", "cost", "name"])
+        for cid, info in card_db.items():
+            writer.writerow([cid, info["cost"], info["name"]])
+
+    print(f"✅ 数据库更新完毕！共记录 {len(card_db)} 张卡牌，已保存至 {CSV_FILE}\n")
 
 
 def sanitize_filename(name):
@@ -58,6 +127,8 @@ def download_and_convert_to_webp(img_url, save_path):
 
 def main():
     os.makedirs(SAVE_DIR, exist_ok=True)
+
+    build_card_dictionary()
 
     for cls_id, cls_name in CLASS_MAPPING.items():
         print(f"\n================ 开始爬取职业: {cls_name} ================")
